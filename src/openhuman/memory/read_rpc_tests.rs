@@ -1042,3 +1042,47 @@ async fn wipe_all_clears_ingest_gate() {
         "wipe_all must clear mem_tree_ingested_sources so a wiped source can re-ingest"
     );
 }
+
+#[tokio::test]
+async fn hydrate_chunk_reads_a_seeded_row() {
+    let (_tmp, cfg) = test_config();
+    insert_raw_chunk(&cfg, "c-hydrate", "chat", "slack:#eng", 1, "[]", "hello", 1);
+    let row = with_connection(&cfg, |conn| {
+        Ok(crate::openhuman::memory::read_rpc::chunks::hydrate_chunk(conn, "c-hydrate").unwrap())
+    })
+    .unwrap()
+    .expect("the seeded chunk must be found");
+    assert_eq!(row.id, "c-hydrate");
+    assert_eq!(row.content_preview.as_deref(), Some("hello"));
+}
+
+#[tokio::test]
+async fn hydrate_chunk_reports_a_missing_row_as_none() {
+    let (_tmp, cfg) = test_config();
+    let row = with_connection(&cfg, |conn| {
+        Ok(crate::openhuman::memory::read_rpc::chunks::hydrate_chunk(conn, "nope").unwrap())
+    })
+    .unwrap();
+    assert!(row.is_none(), "an absent chunk is not an error");
+}
+
+/// A row that cannot be read is not the same thing as a row that is not there.
+/// Recall used to collapse both into "skip", so a broken read came back as a
+/// quietly shorter result set.
+#[tokio::test]
+async fn hydrate_chunk_surfaces_a_broken_row_instead_of_hiding_it() {
+    let (_tmp, cfg) = test_config();
+    insert_raw_chunk(&cfg, "c-broken", "chat", "slack:#eng", 1, "[]", "hello", 1);
+    let err = with_connection(&cfg, |conn| {
+        conn.execute(
+            "UPDATE mem_tree_chunks SET token_count = 'not-a-number' WHERE id = ?1",
+            params!["c-broken"],
+        )?;
+        Ok(crate::openhuman::memory::read_rpc::chunks::hydrate_chunk(conn, "c-broken").err())
+    })
+    .unwrap();
+    assert!(
+        err.is_some(),
+        "a row that fails to map must be reported, not turned into None"
+    );
+}

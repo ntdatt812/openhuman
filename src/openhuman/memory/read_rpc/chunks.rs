@@ -287,8 +287,6 @@ pub async fn recall_rpc(
     query: String,
     k: u32,
 ) -> Result<RpcOutcome<RecallResponse>, String> {
-    use rusqlite::params;
-
     let limit = k.clamp(1, MAX_LIST_LIMIT) as usize;
     log::debug!(
         "[memory_tree::read::recall] query_len={} k={}",
@@ -336,54 +334,18 @@ pub async fn recall_rpc(
             with_connection(&cfg, |conn| {
                 let mut out = Vec::with_capacity(leaves.len());
                 for (chunk_id, score) in leaves {
-                    let row = conn
-                        .query_row(
-                            "SELECT id, source_kind, source_id, source_ref, owner,
-                                    timestamp_ms, token_count, lifecycle_status,
-                                    content_path, content, tags_json,
-                                    CASE WHEN embedding IS NULL THEN 0 ELSE 1 END
-                               FROM mem_tree_chunks WHERE id = ?1",
-                            params![chunk_id],
-                            |r| {
-                                let id: String = r.get(0)?;
-                                let source_kind: String = r.get(1)?;
-                                let source_id: String = r.get(2)?;
-                                let source_ref: Option<String> = r.get(3)?;
-                                let owner: String = r.get(4)?;
-                                let timestamp_ms: i64 = r.get(5)?;
-                                let token_count: i64 = r.get(6)?;
-                                let lifecycle_status: String = r.get(7)?;
-                                let content_path: Option<String> = r.get(8)?;
-                                let content: String = r.get(9)?;
-                                let tags_json: String = r.get(10)?;
-                                let has_emb: i64 = r.get(11)?;
-                                let preview: String =
-                                    content.chars().take(PREVIEW_MAX_CHARS).collect();
-                                let tags: Vec<String> =
-                                    serde_json::from_str(&tags_json).unwrap_or_default();
-                                Ok(ChunkRow {
-                                    id,
-                                    source_kind,
-                                    source_id,
-                                    source_ref,
-                                    owner,
-                                    timestamp_ms,
-                                    token_count: token_count.max(0) as u32,
-                                    lifecycle_status,
-                                    content_path,
-                                    content_preview: if preview.is_empty() {
-                                        None
-                                    } else {
-                                        Some(preview)
-                                    },
-                                    has_embedding: has_emb != 0,
-                                    tags,
-                                })
-                            },
-                        )
-                        .ok();
-                    if let Some(r) = row {
-                        out.push((r, score));
+                    match hydrate_chunk(conn, &chunk_id) {
+                        Ok(Some(row)) => out.push((row, score)),
+                        // The tree can point at a chunk the store no longer has.
+                        // That is expected, and skipping it is the right answer.
+                        Ok(None) => {}
+                        // Anything else is a read that failed. Skip the row so one
+                        // bad chunk cannot sink the whole recall, but say so - a
+                        // recall that silently returns fewer hits than it found is
+                        // indistinguishable from a recall that found less.
+                        Err(e) => {
+                            log::warn!("[memory_tree::read::recall] skipping chunk {chunk_id}: {e}")
+                        }
                     }
                 }
                 Ok(out)
@@ -408,6 +370,65 @@ pub async fn recall_rpc(
         },
         format!("memory_tree::read: recall n={n}"),
     ))
+}
+
+/// Read one chunk row by id for recall hydration.
+///
+/// `Ok(None)` means the row is not there - the tree can outlive a chunk. Every
+/// other failure is returned so the caller can report it instead of turning a
+/// broken read into an absent chunk.
+pub(super) fn hydrate_chunk(
+    conn: &rusqlite::Connection,
+    chunk_id: &str,
+) -> rusqlite::Result<Option<ChunkRow>> {
+    use rusqlite::params;
+
+    match conn.query_row(
+        "SELECT id, source_kind, source_id, source_ref, owner,
+                timestamp_ms, token_count, lifecycle_status,
+                content_path, content, tags_json,
+                CASE WHEN embedding IS NULL THEN 0 ELSE 1 END
+           FROM mem_tree_chunks WHERE id = ?1",
+        params![chunk_id],
+        |r| {
+            let id: String = r.get(0)?;
+            let source_kind: String = r.get(1)?;
+            let source_id: String = r.get(2)?;
+            let source_ref: Option<String> = r.get(3)?;
+            let owner: String = r.get(4)?;
+            let timestamp_ms: i64 = r.get(5)?;
+            let token_count: i64 = r.get(6)?;
+            let lifecycle_status: String = r.get(7)?;
+            let content_path: Option<String> = r.get(8)?;
+            let content: String = r.get(9)?;
+            let tags_json: String = r.get(10)?;
+            let has_emb: i64 = r.get(11)?;
+            let preview: String = content.chars().take(PREVIEW_MAX_CHARS).collect();
+            let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+            Ok(ChunkRow {
+                id,
+                source_kind,
+                source_id,
+                source_ref,
+                owner,
+                timestamp_ms,
+                token_count: token_count.max(0) as u32,
+                lifecycle_status,
+                content_path,
+                content_preview: if preview.is_empty() {
+                    None
+                } else {
+                    Some(preview)
+                },
+                has_embedding: has_emb != 0,
+                tags,
+            })
+        },
+    ) {
+        Ok(row) => Ok(Some(row)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 // ── small helpers ───────────────────────────────────────────────────────
