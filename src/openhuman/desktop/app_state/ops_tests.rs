@@ -419,6 +419,10 @@ async fn current_user_fetch_carries_the_product_identity() {
 /// whole point of that test is that `fetch_current_user_cached` consults the
 /// record. Kept distinct from `APP_STATE_CACHE_TEST_LOCK` because the two guard
 /// different globals and nothing here writes the positive cache.
+///
+/// A test that writes BOTH globals must hold both locks, and must take this one
+/// first — the async lock before the `parking_lot` one — so no task ever awaits
+/// this lock while holding the cache guard.
 static CURRENT_USER_FAILURE_TEST_LOCK: TestLazy<tokio::sync::Mutex<()>> =
     TestLazy::new(|| tokio::sync::Mutex::new(()));
 
@@ -702,6 +706,10 @@ fn seed_both_current_user_caches(api_base: &str, token: &str) {
 
 #[test]
 fn clear_current_user_caches_drops_the_positive_and_the_negative_one() {
+    // Both locks, failure first: this test seeds the failure record as well as the
+    // positive cache, so the cache lock alone leaves it racing every test that holds
+    // only `CURRENT_USER_FAILURE_TEST_LOCK`.
+    let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.blocking_lock();
     let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
     let _reset = CurrentUserCachesResetGuard;
     seed_both_current_user_caches("https://api.example.test", "tok");
@@ -732,6 +740,9 @@ async fn clear_session_drops_both_current_user_caches() {
     let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
+    // Same order as the sibling test: the async lock is taken before the parking_lot
+    // one, so no task can be awaiting the failure lock while holding the cache lock.
+    let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.lock().await;
     let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
     let _reset = CurrentUserCachesResetGuard;
 
