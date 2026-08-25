@@ -672,3 +672,105 @@ async fn fetch_current_user_cached_replays_a_recorded_failure_without_calling_th
         "the fetch must replay the recorded failure rather than issue a request"
     );
 }
+
+// ── sign-out must drop both current-user caches (#5758) ─────────
+
+/// Restores both globals however the test exits.
+struct CurrentUserCachesResetGuard;
+
+impl Drop for CurrentUserCachesResetGuard {
+    fn drop(&mut self) {
+        clear_current_user_caches();
+    }
+}
+
+fn seed_both_current_user_caches(api_base: &str, token: &str) {
+    *CURRENT_USER_CACHE.lock() = Some(CachedCurrentUser {
+        api_base: api_base.to_string(),
+        token: token.to_string(),
+        fetched_at: Instant::now(),
+        user: json!({ "userId": "user-before-logout" }),
+    });
+    seed_current_user_failure(
+        api_base,
+        token,
+        1,
+        Duration::from_secs(0),
+        CurrentUserFetchError::FetchFailed("seeded pre-logout outage".into()),
+    );
+}
+
+#[test]
+fn clear_current_user_caches_drops_the_positive_and_the_negative_one() {
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _reset = CurrentUserCachesResetGuard;
+    seed_both_current_user_caches("https://api.example.test", "tok");
+    assert!(
+        CURRENT_USER_CACHE.lock().is_some(),
+        "precondition: positive cache seeded"
+    );
+    assert!(
+        CURRENT_USER_FAILURE.lock().is_some(),
+        "precondition: failure record seeded"
+    );
+
+    clear_current_user_caches();
+
+    assert!(CURRENT_USER_CACHE.lock().is_none());
+    assert!(CURRENT_USER_FAILURE.lock().is_none());
+}
+
+/// The defect itself. Clearing the pair is not the hard part -- the pair was
+/// already cleared at the backend-rejection site. What was missing is the call
+/// from `clear_session`, the sign-out a person actually performs, so this test
+/// drives that function rather than the helper.
+///
+/// Both caches key on `(api_base, token)`, so a re-login that keeps the session
+/// JWT lands on the same key and is answered from before the logout.
+#[tokio::test]
+async fn clear_session_drops_both_current_user_caches() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _reset = CurrentUserCachesResetGuard;
+
+    let tmp = tempdir().unwrap();
+    // `clear_session` clears the active-user marker under the process-global
+    // HOME; pinning it keeps this test from deleting another one's.
+    let previous_home = std::env::var_os("HOME");
+    unsafe { std::env::set_var("HOME", tmp.path()) };
+
+    let config = Config {
+        workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
+        config_path: tmp.path().join("config.toml"),
+        ..Config::default()
+    };
+    crate::openhuman::memory::binding::install_diagnostics_for_test(
+        &config.workspace_dir,
+        &config.subsystems.memory,
+        Default::default(),
+        Default::default(),
+    );
+
+    seed_both_current_user_caches("https://api.example.test", "same-jwt");
+
+    crate::openhuman::security::credentials::ops::clear_session(&config)
+        .await
+        .expect("clear_session");
+
+    match previous_home {
+        Some(value) => unsafe { std::env::set_var("HOME", value) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
+
+    assert!(
+        CURRENT_USER_CACHE.lock().is_none(),
+        "sign-out left the pre-logout user snapshot behind; a re-login on the same JWT is served it"
+    );
+    assert!(
+        CURRENT_USER_FAILURE.lock().is_none(),
+        "sign-out left the pre-logout failure behind; a re-login on the same JWT replays that error"
+    );
+}

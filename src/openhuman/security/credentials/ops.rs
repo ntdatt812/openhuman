@@ -855,6 +855,12 @@ pub async fn clear_session(config: &Config) -> Result<RpcOutcome<serde_json::Val
         }
     }
 
+    // Both current-user caches are keyed on `(api_base, token)`, so a re-login
+    // that preserves the session JWT hits the same key and is answered from before
+    // the logout. The backend-rejection path already clears them; this is the
+    // sign-out a person actually performs.
+    crate::openhuman::desktop::app_state::clear_current_user_caches();
+
     // Drop the Sentry scope user so events surfaced during/after teardown
     // (and before the next login) are no longer attributed to the
     // signed-out account — issue #3135.

@@ -228,6 +228,22 @@ fn record_current_user_failure(api_base: &str, token: &str, error: CurrentUserFe
     });
 }
 
+/// Drop BOTH current-user caches.
+///
+/// Sign-out is the other half of the contract [`clear_current_user_failure`]
+/// already documents ("called on every success and on sign-out"). Both caches are
+/// keyed on `(api_base, token)`, so a re-login that preserves the session JWT
+/// re-uses the same key and is served the pre-logout answer -- the positive cache
+/// replays the old user snapshot, the negative one replays the old error.
+///
+/// Exposed so the logout path can call it. Keeping the two resets in one place is
+/// the point: they were written as a pair at the backend-rejection site and then
+/// not repeated at `clear_session`, which is the sign-out the user actually takes.
+pub(crate) fn clear_current_user_caches() {
+    *CURRENT_USER_CACHE.lock() = None;
+    clear_current_user_failure();
+}
+
 /// Forget any recorded failure, so the next poll goes straight to the network.
 ///
 /// Called on every success and on sign-out. Missing either one is the failure
@@ -797,8 +813,7 @@ async fn clear_deferred_session_after_backend_rejection(
         ))
     });
 
-    *CURRENT_USER_CACHE.lock() = None;
-    clear_current_user_failure();
+    clear_current_user_caches();
     crate::openhuman::cron::scheduler_gate::set_signed_out(true);
 
     match crate::openhuman::config::default_root_openhuman_dir() {
