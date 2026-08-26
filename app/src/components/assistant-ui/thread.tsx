@@ -329,6 +329,7 @@ const Composer: FC<{
   onModelChange?: (value: string | null, contextWindow?: number | null) => void;
   onEscape?: () => void;
 }> = ({ model, onModelChange, onEscape }) => {
+  const aui = useAui();
   const commands = useContext(SlashCommandsContext);
   const slash = unstable_useSlashCommandAdapter({ commands, fallbackIcon: SlashIcon });
   const inputWrapperRef = useRef<HTMLDivElement>(null);
@@ -368,27 +369,29 @@ const Composer: FC<{
              * unless the host supplies some, and with none the popover never
              * opens, so a host that wants a plain box still gets one.
              */}
-            {/*
-             * No `onInputCapture` write-back here. Reading the raw DOM
-             * `textContent` on every `input` event pushed Lexical's *pre-edit*
-             * text into the store during an IME composition, which left the
-             * store disagreeing with `SyncPlugin`'s `lastSyncedTextRef`; its
-             * runtime->Lexical path then rebuilt the editor mid-composition,
-             * destroying the composition node. The IME cancelled and committed
-             * each interrupted stage literally, so `nihao` arrived as
-             * `n ni nihao 你好` (#5763).
-             *
-             * Nothing is lost by dropping it: `SyncPlugin` already owns
-             * editor-state -> composer-text and is composition-safe (it guards
-             * `editor.isComposing()` and moves `lastSyncedTextRef` in lockstep
-             * with its own `setText`), and `useComposerTextBridge` owns the
-             * programmatic writes (dictation, clear-after-send, draft restore).
-             * A `textContent` read also flattens directive chips to their
-             * labels, which is not what the runtime serializes.
-             */}
             <LexicalComposerInput
               ref={inputWrapperRef}
               placeholder="Send a message..."
+              onInputCapture={event => {
+                // Never write back mid-composition. During an IME composition
+                // these events carry Lexical's *pre-edit* text, and pushing it
+                // into the store leaves the store disagreeing with SyncPlugin's
+                // `lastSyncedTextRef`; its runtime->Lexical path then rebuilds
+                // the editor, destroying the composition node. The IME cancels
+                // and commits the interrupted stage as literal characters, so
+                // `nihao` arrived as `n ni nihao 你好` (#5763). The commit event
+                // that ends a composition has `isComposing === false` and
+                // carries the finished text, so it still gets through.
+                const native = event.nativeEvent as InputEvent;
+                if (native.isComposing || native.inputType === 'insertCompositionText') {
+                  return;
+                }
+                const target = event.target;
+                if (target instanceof HTMLElement) {
+                  const text = target.textContent ?? '';
+                  globalThis.queueMicrotask(() => aui.composer.setText(text));
+                }
+              }}
               onKeyDownCapture={event => {
                 if (event.key === 'Escape' && onEscape) {
                   event.preventDefault();
