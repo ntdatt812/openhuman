@@ -329,7 +329,6 @@ const Composer: FC<{
   onModelChange?: (value: string | null, contextWindow?: number | null) => void;
   onEscape?: () => void;
 }> = ({ model, onModelChange, onEscape }) => {
-  const aui = useAui();
   const commands = useContext(SlashCommandsContext);
   const slash = unstable_useSlashCommandAdapter({ commands, fallbackIcon: SlashIcon });
   const inputWrapperRef = useRef<HTMLDivElement>(null);
@@ -369,16 +368,27 @@ const Composer: FC<{
              * unless the host supplies some, and with none the popover never
              * opens, so a host that wants a plain box still gets one.
              */}
+            {/*
+             * No `onInputCapture` write-back here. Reading the raw DOM
+             * `textContent` on every `input` event pushed Lexical's *pre-edit*
+             * text into the store during an IME composition, which left the
+             * store disagreeing with `SyncPlugin`'s `lastSyncedTextRef`; its
+             * runtime->Lexical path then rebuilt the editor mid-composition,
+             * destroying the composition node. The IME cancelled and committed
+             * each interrupted stage literally, so `nihao` arrived as
+             * `n ni nihao 你好` (#5763).
+             *
+             * Nothing is lost by dropping it: `SyncPlugin` already owns
+             * editor-state -> composer-text and is composition-safe (it guards
+             * `editor.isComposing()` and moves `lastSyncedTextRef` in lockstep
+             * with its own `setText`), and `useComposerTextBridge` owns the
+             * programmatic writes (dictation, clear-after-send, draft restore).
+             * A `textContent` read also flattens directive chips to their
+             * labels, which is not what the runtime serializes.
+             */}
             <LexicalComposerInput
               ref={inputWrapperRef}
               placeholder="Send a message..."
-              onInputCapture={event => {
-                const target = event.target;
-                if (target instanceof HTMLElement) {
-                  const text = target.textContent ?? '';
-                  globalThis.queueMicrotask(() => aui.composer.setText(text));
-                }
-              }}
               onKeyDownCapture={event => {
                 if (event.key === 'Escape' && onEscape) {
                   event.preventDefault();
