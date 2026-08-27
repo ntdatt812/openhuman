@@ -379,11 +379,17 @@ const Composer: FC<{
                 // `lastSyncedTextRef`; its runtime->Lexical path then rebuilds
                 // the editor, destroying the composition node. The IME cancels
                 // and commits the interrupted stage as literal characters, so
-                // `nihao` arrived as `n ni nihao 你好` (#5763). The commit event
-                // that ends a composition has `isComposing === false` and
-                // carries the finished text, so it still gets through.
+                // `nihao` arrived as `n ni nihao 你好` (#5763).
+                //
+                // `isComposing` is the only safe discriminator here. It is the
+                // spec's own "a composition is in progress" flag, so it is true
+                // for exactly the pre-edit events and false on the one carrying
+                // the committed text. Keying off
+                // `inputType === 'insertCompositionText'` as well would also
+                // swallow that commit, because the event ending a composition
+                // can carry the same inputType with `isComposing === false`.
                 const native = event.nativeEvent as InputEvent;
-                if (native.isComposing || native.inputType === 'insertCompositionText') {
+                if (native.isComposing) {
                   return;
                 }
                 const target = event.target;

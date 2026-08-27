@@ -380,6 +380,42 @@ function setComposerText(textarea: HTMLElement, text: string) {
   fireEvent.input(textarea, { data: text, inputType: 'insertText' });
 }
 
+/**
+ * One pre-edit stage of an IME composition: the text the IME is showing
+ * *before* the user has picked a candidate. `isComposing` is true, which is
+ * what marks the text as not yet committed.
+ */
+function fireCompositionStage(textarea: HTMLElement, stageText: string) {
+  textarea.textContent = stageText;
+  const event = new InputEvent('input', {
+    bubbles: true,
+    data: stageText,
+    inputType: 'insertCompositionText',
+  });
+  Object.defineProperty(event, 'isComposing', { value: true });
+  textarea.dispatchEvent(event);
+}
+
+/**
+ * The event that ends a composition and carries the committed text.
+ *
+ * It deliberately keeps `inputType: 'insertCompositionText'` — browsers do
+ * emit the commit with that inputType, and only `isComposing === false`
+ * separates it from a pre-edit stage. A guard that keyed off inputType would
+ * drop the finished text here.
+ */
+function fireCompositionCommit(textarea: HTMLElement, committedText: string) {
+  fireEvent.compositionEnd(textarea, { data: committedText });
+  textarea.textContent = committedText;
+  const event = new InputEvent('input', {
+    bubbles: true,
+    data: committedText,
+    inputType: 'insertCompositionText',
+  });
+  Object.defineProperty(event, 'isComposing', { value: false });
+  textarea.dispatchEvent(event);
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
@@ -1629,6 +1665,50 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
 
     expect(chatSend).not.toHaveBeenCalled();
     expect(textarea).toHaveTextContent('かな');
+  });
+
+  it('does not push a half-composed IME stage into the composer (#5763)', async () => {
+    const { textarea } = await renderSelectedConversation();
+
+    // Typing "nihao" to get 你好 walks through these pre-edit stages. Writing
+    // any of them back desynchronises the store from SyncPlugin, which rebuilds
+    // the editor and destroys the composition node — the IME then commits the
+    // interrupted stage literally, producing "n ni nihao 你好".
+    for (const stage of ['n', 'ni', 'nihao']) {
+      await act(async () => {
+        fireCompositionStage(textarea, stage);
+      });
+    }
+
+    // Send only renders once the composer holds text, so its absence is the
+    // assertion that none of the three stages reached the store.
+    expect(screen.queryByRole('button', { name: 'Send message' })).toBeNull();
+    expect(chatSend).not.toHaveBeenCalled();
+  });
+
+  it('writes back the committed text once the composition ends (#5763)', async () => {
+    const { textarea } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireCompositionStage(textarea, 'nihao');
+    });
+    await act(async () => {
+      fireCompositionCommit(textarea, '你好');
+    });
+
+    // The guard must let the commit through: this is the only event carrying
+    // the finished text, and it shares its inputType with the pre-edit stages.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    });
+    await waitFor(() => {
+      expect(chatSend).toHaveBeenCalled();
+    });
+    expect(chatSend.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ message: '你好' }));
   });
 
   it('does not send while composition is active even if keydown lacks IME flags', async () => {
