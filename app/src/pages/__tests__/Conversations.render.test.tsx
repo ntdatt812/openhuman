@@ -1708,7 +1708,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await waitFor(() => {
       expect(chatSend).toHaveBeenCalled();
     });
-    expect(chatSend.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ message: '你好' }));
+    expect(chatSend).toHaveBeenCalledWith(expect.objectContaining({ message: '你好' }));
   });
 
   it('does not send while composition is active even if keydown lacks IME flags', async () => {
