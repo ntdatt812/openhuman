@@ -487,6 +487,7 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
         status.code(),
         mapper.error.as_deref(),
         &stderr_text,
+        mapper.terminal_error,
     ) {
         anyhow::bail!("[claude-code][driver] {}", message);
     }
@@ -506,6 +507,12 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
 /// stderr stays the fallback for process-level failures that never produced a
 /// structured error at all — a missing binary, a segfault.
 ///
+/// `terminal_error` is the third signal, and it is independent of the other two:
+/// the CLI can report a semantic failure through `result.subtype` or its
+/// `is_error` flag while exiting 0 and saying nothing else. Without it such a
+/// turn returns an empty success — silence, which is worse than the unhelpful
+/// message this PR set out to fix.
+///
 /// The *decision* lives here rather than at the call site on purpose. Split
 /// across the two, reverting the wiring in `run_turn` left every test in this
 /// file green, because they exercised the formatting helper directly and never
@@ -516,8 +523,9 @@ fn turn_failure(
     exit_code: Option<i32>,
     structured: Option<&str>,
     stderr: &str,
+    terminal_error: bool,
 ) -> Option<String> {
-    if success && structured.is_none() {
+    if success && structured.is_none() && !terminal_error {
         return None;
     }
     Some(failure_message(exit_code, structured, stderr))
@@ -526,8 +534,8 @@ fn turn_failure(
 /// Render the failure text. See [`turn_failure`] for when it is reached.
 fn failure_message(exit_code: Option<i32>, structured: Option<&str>, stderr: &str) -> String {
     let stderr = stderr.trim();
-    // A blank structured error is *absent*, not present-and-empty. The parser's
-    // `unwrap_or("claude-code error")` only covers a missing `error` field, so
+    // A blank structured error is *absent*, not present-and-empty. The parser
+    // yields an empty message for anything it cannot read a diagnosis out of, so
     // `{"type":"error","error":""}` arrives as `Some("")` — and taking the `Some`
     // branch on it yields " (exit Some(1))", a leading space where the diagnosis
     // should be, with stderr discarded. Falling through to stderr is strictly

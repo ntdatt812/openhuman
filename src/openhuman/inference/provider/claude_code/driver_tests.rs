@@ -220,9 +220,32 @@ fn structured_error_wins_over_stderr_when_both_exist() {
 
 #[test]
 fn structured_error_is_reported_even_on_a_clean_exit() {
-    // `result.subtype=error` sets mapper.error while the process exits 0.
-    let msg = failure_message(Some(0), Some("claude reported `result.subtype=error`"), "");
-    assert!(msg.contains("result.subtype=error"), "got: {msg}");
+    // Claude prints the actionable text on stdout and exits 0.
+    let msg = turn_failure(
+        true,
+        Some(0),
+        Some("API Error: 403 Request not allowed"),
+        "",
+        false,
+    )
+    .expect("a structured error on a clean exit is still a failure");
+    assert!(msg.contains("403 Request not allowed"), "got: {msg}");
+}
+
+/// The case the `result.subtype=error` synthetic string used to stand in for.
+/// Now that the mapper records the failure as a flag rather than as prose,
+/// nothing else marks this turn as failed — drop `terminal_error` from the
+/// decision and a semantic failure with a clean exit returns an empty success.
+#[test]
+fn a_terminal_failure_without_a_message_is_still_a_failure() {
+    let msg = turn_failure(true, Some(0), None, "auth token expired", true)
+        .expect("result.is_error must not be reported as success");
+    assert_eq!(msg, "exit Some(0) stderr=auth token expired");
+
+    assert!(
+        turn_failure(true, Some(0), None, "", false).is_none(),
+        "a clean turn with no failure signal must stay a success"
+    );
 }
 
 #[test]
@@ -265,7 +288,7 @@ fn a_padded_structured_error_is_still_reported() {
 
 #[test]
 fn a_clean_turn_with_no_structured_error_is_not_a_failure() {
-    assert_eq!(turn_failure(true, Some(0), None, ""), None);
+    assert_eq!(turn_failure(true, Some(0), None, "", false), None);
 }
 
 // The #5712 regression itself, asserted where the driver actually decides it:
@@ -279,6 +302,7 @@ fn a_structured_error_survives_a_nonzero_exit_at_the_decision() {
         Some(1),
         Some("Failed to authenticate. API Error: 403 Request not allowed"),
         "",
+        false,
     )
     .expect("a nonzero exit is a failure");
     assert!(
@@ -291,14 +315,14 @@ fn a_structured_error_survives_a_nonzero_exit_at_the_decision() {
 #[test]
 fn a_clean_exit_carrying_a_structured_error_is_still_a_failure() {
     // `result.subtype=error` sets mapper.error while the process exits 0.
-    let failure = turn_failure(true, Some(0), Some("quota exhausted"), "")
+    let failure = turn_failure(true, Some(0), Some("quota exhausted"), "", false)
         .expect("a structured error is a failure whatever the exit code");
     assert!(failure.contains("quota exhausted"), "got: {failure}");
 }
 
 #[test]
 fn a_nonzero_exit_is_a_failure_even_without_a_structured_error() {
-    let failure = turn_failure(false, Some(127), None, "command not found")
+    let failure = turn_failure(false, Some(127), None, "command not found", false)
         .expect("a nonzero exit is a failure on its own");
     assert!(failure.contains("command not found"), "got: {failure}");
 }
@@ -308,7 +332,7 @@ fn a_blank_structured_error_on_a_clean_exit_is_still_a_failure() {
     // `{"type":"error","error":""}` arrives as `Some("")`. It is an error event,
     // so the turn failed; the message falls back to stderr because a blank
     // structured error diagnoses nothing.
-    let failure = turn_failure(true, Some(0), Some(""), "socket closed")
+    let failure = turn_failure(true, Some(0), Some(""), "socket closed", false)
         .expect("an error event is a failure even when it carries no text");
     assert_eq!(failure, "exit Some(0) stderr=socket closed");
 }
