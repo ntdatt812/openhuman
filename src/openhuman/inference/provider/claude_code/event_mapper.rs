@@ -16,10 +16,10 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use super::stream_parser::ClaudeCodeEvent;
+use crate::openhuman::inference::provider::ops::sanitize::sanitize_api_error;
 use crate::openhuman::inference::provider::types::{
     ChatResponse, ProviderDelta, ToolCall, UsageInfo,
 };
-use crate::openhuman::inference::provider::ops::sanitize::sanitize_api_error;
 
 fn result_diagnostic(raw: &Value) -> Option<String> {
     let values = raw

@@ -395,4 +395,17 @@ fn the_shape_of_the_line_is_reported() {
     assert!(shape("   ").contains("blank"));
 }
 
+#[test]
+fn stderr_truncation_does_not_split_utf8() {
+    let mut stderr = "a".repeat(16_383);
+    stderr.push('€');
+    stderr.push('x');
+
+    truncate_stderr(&mut stderr);
+
+    assert_eq!(stderr.len(), 16_383);
+    assert!(stderr.is_char_boundary(stderr.len()));
+    assert!(!stderr.ends_with('€'));
+}
+
 // Both the driver failure tests and parser diagnostic tests are kept here.
