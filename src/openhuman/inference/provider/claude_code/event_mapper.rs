@@ -20,6 +20,32 @@ use crate::openhuman::inference::provider::types::{
     ChatResponse, ProviderDelta, ToolCall, UsageInfo,
 };
 
+fn result_diagnostic(raw: &Value) -> Option<String> {
+    let values = raw
+        .get("errors")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .chain(raw.get("result"))
+        .chain(raw.get("error"))
+        .chain(raw.get("message"));
+
+    let messages: Vec<String> = values
+        .filter_map(|value| {
+            value.as_str().map(str::to_string).or_else(|| {
+                value
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+        })
+        .map(|message| message.trim().to_string())
+        .filter(|message| !message.is_empty())
+        .collect();
+
+    (!messages.is_empty()).then(|| messages.join("; "))
+}
+
 #[derive(Debug, Clone)]
 struct BlockState {
     kind: BlockKind,
@@ -79,7 +105,7 @@ impl EventMapper {
                 is_error,
                 usage,
                 total_cost_usd,
-                ..
+                raw,
             } => {
                 let mut parsed = usage.as_ref().map(parse_usage);
                 // CC stream emits `total_cost_usd` on the terminal `result`
@@ -93,6 +119,9 @@ impl EventMapper {
                 self.usage = parsed;
                 if is_error || subtype.as_deref() == Some("error") {
                     self.terminal_error = true;
+                    if self.error.is_none() {
+                        self.error = result_diagnostic(&raw);
+                    }
                 }
                 self.finished = true;
                 Vec::new()

@@ -184,3 +184,37 @@ fn result_is_error_flag_marks_terminal_failure() {
     assert!(m.terminal_error);
     assert!(m.error.is_none());
 }
+
+#[test]
+fn failed_result_preserves_errors_payload() {
+    let mut m = EventMapper::new();
+    m.handle(ClaudeCodeEvent::Result {
+        subtype: Some("error_during_execution".into()),
+        is_error: true,
+        usage: None,
+        total_cost_usd: None,
+        raw: json!({
+            "errors": ["API request failed", "retry exhausted"],
+            "result": "The provider could not complete the request"
+        }),
+    });
+
+    assert_eq!(
+        m.error.as_deref(),
+        Some("API request failed; retry exhausted; The provider could not complete the request")
+    );
+}
+
+#[test]
+fn failed_result_preserves_nested_error_message() {
+    let mut m = EventMapper::new();
+    m.handle(ClaudeCodeEvent::Result {
+        subtype: Some("error".into()),
+        is_error: false,
+        usage: None,
+        total_cost_usd: None,
+        raw: json!({"error": {"message": "authentication failed"}}),
+    });
+
+    assert_eq!(m.error.as_deref(), Some("authentication failed"));
+}
