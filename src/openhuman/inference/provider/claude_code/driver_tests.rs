@@ -274,7 +274,18 @@ fn a_whitespace_only_structured_error_falls_back_to_stderr() {
 #[test]
 fn an_empty_structured_error_with_empty_stderr_reports_the_exit_code() {
     let msg = failure_message(Some(1), Some(""), "");
-    assert_eq!(msg, "exit Some(1) stderr=");
+    assert_eq!(msg, "Claude Code reported an error (exit Some(1))");
+}
+
+#[test]
+fn a_structured_error_is_redacted_and_bounded() {
+    let msg = failure_message(
+        Some(1),
+        Some(&format!("sk-secret-123 {}", "x".repeat(300))),
+        "",
+    );
+    assert!(!msg.contains("sk-secret-123"), "got: {msg}");
+    assert!(msg.len() < 250, "got {} bytes", msg.len());
 }
 
 /// Surrounding whitespace on a real message is trimmed, not treated as absent.

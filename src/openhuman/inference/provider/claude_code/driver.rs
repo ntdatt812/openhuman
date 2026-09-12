@@ -14,6 +14,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
+use crate::openhuman::inference::provider::ops::sanitize_api_error;
+
 /// Hard timeout per turn (PLAN §8). If the CLI hangs (network stall,
 /// infinite loop, MCP deadlock) we kill the child and surface a timeout.
 const DEFAULT_TURN_TIMEOUT_SECS: u64 = 900;
@@ -609,10 +611,15 @@ fn failure_message(exit_code: Option<i32>, structured: Option<&str>, stderr: &st
     // branch on it yields " (exit Some(1))", a leading space where the diagnosis
     // should be, with stderr discarded. Falling through to stderr is strictly
     // better: it may hold the real cause, and it cannot be worse than nothing.
-    match structured.map(str::trim).filter(|err| !err.is_empty()) {
+    match structured
+        .map(str::trim)
+        .filter(|err| !err.is_empty())
+        .map(sanitize_api_error)
+    {
         // Keep the exit code alongside the structured error: it distinguishes a
         // provider error that still exited 0 from one that took the process down.
         Some(err) => format!("{err} (exit {exit_code:?})"),
+        None if stderr.is_empty() => format!("Claude Code reported an error (exit {exit_code:?})"),
         None => format!("exit {exit_code:?} stderr={stderr}"),
     }
 }
