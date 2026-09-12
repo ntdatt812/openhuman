@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use super::stream_parser::ClaudeCodeEvent;
-use crate::openhuman::inference::provider::ops::sanitize::sanitize_api_error;
+use crate::openhuman::inference::provider::ops::sanitize_api_error;
 use crate::openhuman::inference::provider::types::{
     ChatResponse, ProviderDelta, ToolCall, UsageInfo,
 };
@@ -40,11 +40,11 @@ fn result_diagnostic(raw: &Value) -> Option<String> {
                     .map(str::to_string)
             })
         })
-        .map(|message| sanitize_api_error(message.trim()))
+        .map(|message| message.trim().to_string())
         .filter(|message| !message.is_empty())
         .collect();
 
-    (!messages.is_empty()).then(|| messages.join("; "))
+    (!messages.is_empty()).then(|| sanitize_api_error(&messages.join("; ")))
 }
 
 #[derive(Debug, Clone)]
