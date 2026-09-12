@@ -476,9 +476,7 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
                 break;
             }
             acc.push_str(&String::from_utf8_lossy(&tmp[..n]));
-            if acc.len() > 16_384 {
-                acc.truncate(16_384);
-            }
+            truncate_stderr(&mut acc);
         }
         acc
     });
@@ -590,6 +588,16 @@ fn turn_failure(
         return None;
     }
     Some(failure_message(exit_code, structured, stderr))
+}
+
+fn truncate_stderr(acc: &mut String) {
+    if acc.len() > 16_384 {
+        let mut limit = 16_384;
+        while !acc.is_char_boundary(limit) {
+            limit -= 1;
+        }
+        acc.truncate(limit);
+    }
 }
 
 /// Render the failure text. See [`turn_failure`] for when it is reached.

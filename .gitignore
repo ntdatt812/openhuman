@@ -78,6 +78,7 @@ app/src-tauri/runtime-skill-*
 CLAUDE.local.md
 
 # Test artifacts
+.omc/state/
 e2e-results/
 wdio-logs/
 test-results/

@@ -154,6 +154,16 @@ fn structured_cli_error_is_preserved() {
 }
 
 #[test]
+fn cli_error_redacts_sensitive_diagnostics() {
+    let mut m = EventMapper::new();
+    m.handle(ClaudeCodeEvent::Error {
+        message: "request failed with sk-secret-token".into(),
+    });
+
+    assert_eq!(m.error.as_deref(), Some("request failed with [REDACTED]"));
+}
+
+#[test]
 fn result_error_is_recorded_without_masking_stderr_fallback() {
     let mut m = EventMapper::new();
     m.handle(ClaudeCodeEvent::Result {
@@ -217,4 +227,18 @@ fn failed_result_preserves_nested_error_message() {
     });
 
     assert_eq!(m.error.as_deref(), Some("authentication failed"));
+}
+
+#[test]
+fn result_diagnostic_redacts_sensitive_values() {
+    let mut m = EventMapper::new();
+    m.handle(ClaudeCodeEvent::Result {
+        subtype: Some("error".into()),
+        is_error: true,
+        usage: None,
+        total_cost_usd: None,
+        raw: json!({"error": {"message": "token sk-secret-token was rejected"}}),
+    });
+
+    assert_eq!(m.error.as_deref(), Some("token [REDACTED] was rejected"));
 }

@@ -19,6 +19,7 @@ use super::stream_parser::ClaudeCodeEvent;
 use crate::openhuman::inference::provider::types::{
     ChatResponse, ProviderDelta, ToolCall, UsageInfo,
 };
+use crate::openhuman::inference::provider::ops::sanitize::sanitize_api_error;
 
 fn result_diagnostic(raw: &Value) -> Option<String> {
     let values = raw
@@ -39,7 +40,7 @@ fn result_diagnostic(raw: &Value) -> Option<String> {
                     .map(str::to_string)
             })
         })
-        .map(|message| message.trim().to_string())
+        .map(|message| sanitize_api_error(message.trim()))
         .filter(|message| !message.is_empty())
         .collect();
 
@@ -96,7 +97,7 @@ impl EventMapper {
             ClaudeCodeEvent::Error { message } => {
                 self.terminal_error = true;
                 if !message.trim().is_empty() {
-                    self.error = Some(message);
+                    self.error = Some(sanitize_api_error(&message));
                 }
                 Vec::new()
             }
